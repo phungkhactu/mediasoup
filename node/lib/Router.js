@@ -66,6 +66,12 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         return this.#internal;
     }
     /**
+    * get producers
+    */
+    getProducers() {
+        return this.#producers;
+    }
+    /**
      * Whether the Router is closed.
      */
     get closed() {
