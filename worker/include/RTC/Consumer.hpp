@@ -14,9 +14,9 @@
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RtpStream.hpp"
 #include "RTC/RtpStreamSend.hpp"
+#include <absl/container/flat_hash_set.h>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 using json = nlohmann::json;
@@ -138,14 +138,14 @@ namespace RTC
 		{
 			this->externallyManagedBitrate = true;
 		}
-		virtual uint8_t GetBitratePriority() const                          = 0;
-		virtual uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss) = 0;
-		virtual void ApplyLayers()                                          = 0;
-		virtual uint32_t GetDesiredBitrate() const                          = 0;
-		virtual void SendRtpPacket(RTC::RtpPacket* packet)                  = 0;
-		virtual std::vector<RTC::RtpStreamSend*> GetRtpStreams()            = 0;
-		virtual void GetRtcp(
-		  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs) = 0;
+		virtual uint8_t GetBitratePriority() const                                                  = 0;
+		virtual uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss)                         = 0;
+		virtual void ApplyLayers()                                                                  = 0;
+		virtual uint32_t GetDesiredBitrate() const                                                  = 0;
+		virtual void SendRtpPacket(RTC::RtpPacket* packet, RTC::RtpPacket::SharedPtr* clonedPacket) = 0;
+		virtual const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const                       = 0;
+		virtual RTC::RTCP::CompoundPacket::UniquePtr GetRtcp(
+		  RTC::RtpStreamSend* rtpStream, uint64_t nowMs) = 0;
 		virtual void NeedWorstRemoteFractionLost(uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) = 0;
 		virtual void ReceiveNack(RTC::RTCP::FeedbackRtpNackPacket* nackPacket) = 0;
 		virtual void ReceiveKeyFrameRequest(
@@ -182,7 +182,7 @@ namespace RTC
 		struct RTC::RtpHeaderExtensionIds rtpHeaderExtensionIds;
 		const std::vector<uint8_t>* producerRtpStreamScores{ nullptr };
 		// Others.
-		std::unordered_set<uint8_t> supportedCodecPayloadTypes;
+		absl::flat_hash_set<uint8_t> supportedCodecPayloadTypes;
 		uint64_t lastRtcpSentTime{ 0u };
 		uint16_t maxRtcpInterval{ 0u };
 		bool externallyManagedBitrate{ false };

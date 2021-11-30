@@ -30,9 +30,9 @@ namespace RTC
 		uint32_t IncreaseLayer(uint32_t bitrate, bool considerLoss) override;
 		void ApplyLayers() override;
 		uint32_t GetDesiredBitrate() const override;
-		void SendRtpPacket(RTC::RtpPacket* packet) override;
-		void GetRtcp(RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs) override;
-		std::vector<RTC::RtpStreamSend*> GetRtpStreams() override
+		void SendRtpPacket(RTC::RtpPacket* packet, RTC::RtpPacket::SharedPtr* clonedPacket) override;
+		RTC::RTCP::CompoundPacket::UniquePtr GetRtcp(RTC::RtpStreamSend* rtpStream, uint64_t nowMs) override;
+		const std::vector<RTC::RtpStreamSend*>& GetRtpStreams() const override
 		{
 			return this->rtpStreams;
 		}
@@ -60,11 +60,11 @@ namespace RTC
 		// Allocated by this.
 		std::vector<RTC::RtpStreamSend*> rtpStreams;
 		// Others.
-		std::unordered_map<uint32_t, uint32_t> mapMappedSsrcSsrc;
-		std::unordered_map<uint32_t, RTC::RtpStreamSend*> mapSsrcRtpStream;
+		absl::flat_hash_map<uint32_t, uint32_t> mapMappedSsrcSsrc;
+		absl::flat_hash_map<uint32_t, RTC::RtpStreamSend*> mapSsrcRtpStream;
 		bool keyFrameSupported{ false };
-		std::unordered_map<RTC::RtpStreamSend*, bool> mapRtpStreamSyncRequired;
-		std::unordered_map<RTC::RtpStreamSend*, RTC::SeqManager<uint16_t>> mapRtpStreamRtpSeqManager;
+		absl::flat_hash_map<RTC::RtpStreamSend*, bool> mapRtpStreamSyncRequired;
+		absl::flat_hash_map<RTC::RtpStreamSend*, RTC::SeqManager<uint16_t>> mapRtpStreamRtpSeqManager;
 	};
 } // namespace RTC
 

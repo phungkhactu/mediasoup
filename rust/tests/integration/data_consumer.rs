@@ -1,6 +1,5 @@
 use async_io::Timer;
 use futures_lite::future;
-use hash_hasher::{HashedMap, HashedSet};
 use mediasoup::data_consumer::{DataConsumerOptions, DataConsumerType};
 use mediasoup::data_producer::{DataProducer, DataProducerOptions};
 use mediasoup::data_structures::{AppData, TransportListenIp};
@@ -12,6 +11,7 @@ use mediasoup::sctp_parameters::SctpStreamParameters;
 use mediasoup::webrtc_transport::{TransportListenIps, WebRtcTransport, WebRtcTransportOptions};
 use mediasoup::worker::{Worker, WorkerSettings};
 use mediasoup::worker_manager::WorkerManager;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -105,7 +105,7 @@ fn consume_data_succeeds() {
             .on_new_data_consumer({
                 let new_data_consumer_count = Arc::clone(&new_data_consumer_count);
 
-                Arc::new(move |_data_consumer| {
+                Box::new(move |_data_consumer| {
                     new_data_consumer_count.fetch_add(1, Ordering::SeqCst);
                 })
             })
@@ -154,16 +154,16 @@ fn consume_data_succeeds() {
             let dump = router.dump().await.expect("Failed to dump router");
 
             assert_eq!(dump.map_data_producer_id_data_consumer_ids, {
-                let mut map = HashedMap::default();
+                let mut map = HashMap::new();
                 map.insert(data_producer.id(), {
-                    let mut set = HashedSet::default();
+                    let mut set = HashSet::new();
                     set.insert(data_consumer.id());
                     set
                 });
                 map
             });
             assert_eq!(dump.map_data_consumer_id_data_producer_id, {
-                let mut map = HashedMap::default();
+                let mut map = HashMap::new();
                 map.insert(data_consumer.id(), data_producer.id());
                 map
             });
@@ -316,7 +316,7 @@ fn consume_data_on_direct_transport_succeeds() {
             .on_new_data_consumer({
                 let new_data_consumer_count = Arc::clone(&new_data_consumer_count);
 
-                Arc::new(move |_data_consumer| {
+                Box::new(move |_data_consumer| {
                     new_data_consumer_count.fetch_add(1, Ordering::SeqCst);
                 })
             })
@@ -478,14 +478,11 @@ fn close_event() {
             let dump = router.dump().await.expect("Failed to dump router");
 
             assert_eq!(dump.map_data_producer_id_data_consumer_ids, {
-                let mut map = HashedMap::default();
-                map.insert(data_producer.id(), HashedSet::default());
+                let mut map = HashMap::new();
+                map.insert(data_producer.id(), HashSet::new());
                 map
             });
-            assert_eq!(
-                dump.map_data_consumer_id_data_producer_id,
-                HashedMap::default()
-            );
+            assert_eq!(dump.map_data_consumer_id_data_producer_id, HashMap::new());
         }
 
         {

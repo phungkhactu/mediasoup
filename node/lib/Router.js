@@ -377,38 +377,6 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         return transport;
     }
     /**
-     * Xây dựng các hàm để pipe to router ở nhiều host khác nhau
-     */
-     async pipeToRouterCreatePipeTransport({ listenIp = '0.0.0.0', enableSctp = true, numSctpStreams = { OS: 1024, MIS: 1024 }, enableRtx = false, enableSrtp = false }) {
-        // Step 1: Peer1 gọi router2.createPipeTransport(listenIp: 127.0.0.1,…)
-        // listenIp = "10.70.123.65";
-        let localPipeTransport = await this.createPipeTransport({ listenIp, enableSctp, numSctpStreams, enableRtx, enableSrtp });
-        return localPipeTransport;
-    }
-    async pipeToRouterConnect({localPipeTransport, localIp, localPort, srtpParameters}) {
-        // localIp = '10.70.123.66';
-        console.log("pipeToRouterConnect - localIp:", localIp)
-        console.log("pipeToRouterConnect - localPort:", localPort)
-        console.log("pipeToRouterConnect - srtpParameters:", srtpParameters);
-        await localPipeTransport.connect({
-            ip: localIp,
-            port: localPort,
-            srtpParameters: srtpParameters
-        })
-    }
-    async pipeToRouterProduce({localPipeTransport, producerId, producerAppData, kind, rtpParameters, paused}) {
-        console.log("pipeToRouterProduce - producerId:", producerId)
-        console.log("pipeToRouterProduce - kind:", kind)
-        console.log("pipeToRouterProduce - rtpParameters:", rtpParameters);
-        await localPipeTransport.produce({
-            id: producerId,
-            kind: kind,
-            rtpParameters: rtpParameters,
-            paused: paused,
-            appData: producerAppData
-        });
-    }
-    /**
      * Pipes the given Producer or DataProducer into another Router in same host.
      */
     async pipeToRouter({ producerId, dataProducerId, router, listenIp = '127.0.0.1', enableSctp = true, numSctpStreams = { OS: 1024, MIS: 1024 }, enableRtx = false, enableSrtp = false }) {

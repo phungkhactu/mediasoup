@@ -2,7 +2,6 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "PayloadChannel/PayloadChannelSocket.hpp"
-#include "DepLibUV.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include "PayloadChannel/PayloadChannelRequest.hpp"
@@ -13,18 +12,6 @@
 namespace PayloadChannel
 {
 	/* Static. */
-	inline static void onAsync(uv_handle_t* handle)
-	{
-		while (static_cast<PayloadChannelSocket*>(handle->data)->CallbackRead())
-		{
-			// Read while there are new messages.
-		}
-	}
-
-	inline static void onClose(uv_handle_t* handle)
-	{
-		delete handle;
-	}
 
 	// Binary length for a 4194304 bytes payload.
 	static constexpr size_t MessageMaxLen{ 4194308 };
@@ -32,48 +19,11 @@ namespace PayloadChannel
 
 	/* Instance methods. */
 	PayloadChannelSocket::PayloadChannelSocket(int consumerFd, int producerFd)
-	  : consumerSocket(new ConsumerSocket(consumerFd, MessageMaxLen, this)),
-	    producerSocket(new ProducerSocket(producerFd, MessageMaxLen)),
-	    writeBuffer(static_cast<uint8_t*>(std::malloc(MessageMaxLen)))
-	{
-		MS_TRACE();
-	}
-
-	PayloadChannelSocket::PayloadChannelSocket(
-	  PayloadChannelReadFn payloadChannelReadFn,
-	  PayloadChannelReadCtx payloadChannelReadCtx,
-	  PayloadChannelWriteFn payloadChannelWriteFn,
-	  PayloadChannelWriteCtx payloadChannelWriteCtx)
-	  : payloadChannelReadFn(payloadChannelReadFn), payloadChannelReadCtx(payloadChannelReadCtx),
-	    payloadChannelWriteFn(payloadChannelWriteFn), payloadChannelWriteCtx(payloadChannelWriteCtx)
+	  : consumerSocket(consumerFd, MessageMaxLen, this), producerSocket(producerFd, MessageMaxLen)
 	{
 		MS_TRACE();
 
-		int err;
-
-		this->uvReadHandle       = new uv_async_t;
-		this->uvReadHandle->data = static_cast<void*>(this);
-
-		err =
-		  uv_async_init(DepLibUV::GetLoop(), this->uvReadHandle, reinterpret_cast<uv_async_cb>(onAsync));
-
-		if (err != 0)
-		{
-			delete this->uvReadHandle;
-			this->uvReadHandle = nullptr;
-
-			MS_THROW_ERROR("uv_async_init() failed: %s", uv_strerror(err));
-		}
-
-		err = uv_async_send(this->uvReadHandle);
-
-		if (err != 0)
-		{
-			delete this->uvReadHandle;
-			this->uvReadHandle = nullptr;
-
-			MS_THROW_ERROR("uv_async_send() failed: %s", uv_strerror(err));
-		}
+		this->writeBuffer = (uint8_t*)std::malloc(MessageMaxLen);
 	}
 
 	PayloadChannelSocket::~PayloadChannelSocket()
@@ -85,9 +35,6 @@ namespace PayloadChannel
 
 		if (!this->closed)
 			Close();
-
-		delete this->consumerSocket;
-		delete this->producerSocket;
 	}
 
 	void PayloadChannelSocket::Close()
@@ -99,20 +46,8 @@ namespace PayloadChannel
 
 		this->closed = true;
 
-		if (this->uvReadHandle)
-		{
-			uv_close(reinterpret_cast<uv_handle_t*>(this->uvReadHandle), static_cast<uv_close_cb>(onClose));
-		}
-
-		if (this->consumerSocket)
-		{
-			this->consumerSocket->Close();
-		}
-
-		if (this->producerSocket)
-		{
-			this->producerSocket->Close();
-		}
+		this->consumerSocket.Close();
+		this->producerSocket.Close();
 	}
 
 	void PayloadChannelSocket::SetListener(Listener* listener)
@@ -144,11 +79,8 @@ namespace PayloadChannel
 			return;
 		}
 
-		SendImpl(
-		  reinterpret_cast<const uint8_t*>(message.c_str()),
-		  static_cast<uint32_t>(message.length()),
-		  payload,
-		  static_cast<uint32_t>(payloadLen));
+		SendImpl(message.c_str(), static_cast<uint32_t>(message.length()));
+		SendImpl(payload, static_cast<uint32_t>(payloadLen));
 	}
 
 	void PayloadChannelSocket::Send(json& jsonMessage)
@@ -167,166 +99,23 @@ namespace PayloadChannel
 			return;
 		}
 
-		SendImpl(
-		  reinterpret_cast<const uint8_t*>(message.c_str()), static_cast<uint32_t>(message.length()));
+		SendImpl(message.c_str(), static_cast<uint32_t>(message.length()));
 	}
 
-	bool PayloadChannelSocket::CallbackRead()
+	inline void PayloadChannelSocket::SendImpl(const void* payload, uint32_t payloadLen)
 	{
 		MS_TRACE();
 
-		if (this->closed)
-			return false;
+		std::memcpy(this->writeBuffer, &payloadLen, sizeof(uint32_t));
 
-		uint8_t* message{ nullptr };
-		uint32_t messageLen;
-		size_t messageCtx;
-
-		uint8_t* payload{ nullptr };
-		uint32_t payloadLen;
-		size_t payloadCapacity;
-
-		auto free = this->payloadChannelReadFn(
-		  &message,
-		  &messageLen,
-		  &messageCtx,
-		  &payload,
-		  &payloadLen,
-		  &payloadCapacity,
-		  this->uvReadHandle,
-		  this->payloadChannelReadCtx);
-
-		if (free)
+		if (payloadLen != 0)
 		{
-			try
-			{
-				json jsonData = json::parse(message, message + static_cast<size_t>(messageLen));
-
-				if (PayloadChannelRequest::IsRequest(jsonData))
-				{
-					try
-					{
-						auto* request = new PayloadChannel::PayloadChannelRequest(this, jsonData);
-						request->SetPayload(payload, payloadLen);
-
-						// Notify the listener.
-						try
-						{
-							this->listener->OnPayloadChannelRequest(this, request);
-						}
-						catch (const MediaSoupTypeError& error)
-						{
-							request->TypeError(error.what());
-						}
-						catch (const MediaSoupError& error)
-						{
-							request->Error(error.what());
-						}
-
-						// Delete the Request.
-						delete request;
-					}
-					catch (const json::parse_error& error)
-					{
-						MS_ERROR_STD("JSON parsing error: %s", error.what());
-					}
-					catch (const MediaSoupError& error)
-					{
-						MS_ERROR("discarding wrong Payload Channel notification");
-					}
-				}
-
-				else if (Notification::IsNotification(jsonData))
-				{
-					try
-					{
-						auto* notification = new PayloadChannel::Notification(jsonData);
-						notification->SetPayload(payload, payloadLen);
-
-						// Notify the listener.
-						try
-						{
-							this->listener->OnPayloadChannelNotification(this, notification);
-						}
-						catch (const MediaSoupError& error)
-						{
-							MS_ERROR("notification failed: %s", error.what());
-						}
-
-						// Delete the Notification.
-						delete notification;
-					}
-					catch (const json::parse_error& error)
-					{
-						MS_ERROR_STD("JSON parsing error: %s", error.what());
-					}
-					catch (const MediaSoupError& error)
-					{
-						MS_ERROR("discarding wrong Payload Channel notification");
-					}
-				}
-
-				else
-				{
-					MS_ERROR("discarding wrong Payload Channel data");
-				}
-			}
-			catch (const json::parse_error& error)
-			{
-				MS_ERROR("JSON parsing error: %s", error.what());
-			}
-			catch (const MediaSoupError& error)
-			{
-				MS_ERROR("discarding wrong Channel request");
-			}
-
-			free(message, messageLen, messageCtx);
-			free(payload, payloadLen, payloadCapacity);
+			std::memcpy(this->writeBuffer + sizeof(uint32_t), payload, payloadLen);
 		}
 
-		return free != nullptr;
-	}
+		size_t len = sizeof(uint32_t) + payloadLen;
 
-	inline void PayloadChannelSocket::SendImpl(const uint8_t* message, uint32_t messageLen)
-	{
-		MS_TRACE();
-
-		// Write using function call if provided.
-		if (this->payloadChannelWriteFn)
-		{
-			this->payloadChannelWriteFn(message, messageLen, nullptr, 0, this->payloadChannelWriteCtx);
-		}
-		else
-		{
-			std::memcpy(this->writeBuffer, &messageLen, sizeof(uint32_t));
-
-			if (messageLen != 0)
-			{
-				std::memcpy(this->writeBuffer + sizeof(uint32_t), message, messageLen);
-			}
-
-			size_t len = sizeof(uint32_t) + messageLen;
-
-			this->producerSocket->Write(this->writeBuffer, len);
-		}
-	}
-
-	inline void PayloadChannelSocket::SendImpl(
-	  const uint8_t* message, uint32_t messageLen, const uint8_t* payload, uint32_t payloadLen)
-	{
-		MS_TRACE();
-
-		// Write using function call if provided.
-		if (this->payloadChannelWriteFn)
-		{
-			this->payloadChannelWriteFn(
-			  message, messageLen, payload, payloadLen, this->payloadChannelWriteCtx);
-		}
-		else
-		{
-			SendImpl(message, messageLen);
-			SendImpl(payload, payloadLen);
-		}
+		this->producerSocket.Write(this->writeBuffer, len);
 	}
 
 	void PayloadChannelSocket::OnConsumerSocketMessage(
@@ -341,7 +130,8 @@ namespace PayloadChannel
 			{
 				try
 				{
-					this->ongoingRequest = new PayloadChannel::PayloadChannelRequest(this, jsonData);
+					json jsonMessage     = json::parse(msg, msg + msgLen);
+					this->ongoingRequest = new PayloadChannel::PayloadChannelRequest(this, jsonMessage);
 				}
 				catch (const json::parse_error& error)
 				{
@@ -357,7 +147,8 @@ namespace PayloadChannel
 			{
 				try
 				{
-					this->ongoingNotification = new PayloadChannel::Notification(jsonData);
+					json jsonMessage          = json::parse(msg, msg + msgLen);
+					this->ongoingNotification = new PayloadChannel::Notification(jsonMessage);
 				}
 				catch (const json::parse_error& error)
 				{

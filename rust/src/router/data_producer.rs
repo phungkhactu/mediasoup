@@ -437,21 +437,24 @@ impl DataProducer {
 }
 
 impl DirectDataProducer {
-    /// Sends direct messages from the Rust to the worker.
-    pub fn send(&self, message: WebRtcMessage<'_>) -> Result<(), NotificationError> {
+    /// Sends direct messages from the Rust process.
+    pub async fn send(&self, message: WebRtcMessage) -> Result<(), NotificationError> {
         let (ppid, payload) = message.into_ppid_and_payload();
 
-        self.inner.payload_channel.notify(
-            DataProducerSendNotification {
-                internal: DataProducerInternal {
-                    router_id: self.inner.transport.router_id(),
-                    transport_id: self.inner.transport.id(),
-                    data_producer_id: self.inner.id,
+        self.inner
+            .payload_channel
+            .notify(
+                DataProducerSendNotification {
+                    internal: DataProducerInternal {
+                        router_id: self.inner.transport.router_id(),
+                        transport_id: self.inner.transport.id(),
+                        data_producer_id: self.inner.id,
+                    },
+                    data: DataProducerSendData { ppid },
                 },
-                data: DataProducerSendData { ppid },
-            },
-            payload.into_owned(),
-        )
+                payload,
+            )
+            .await
     }
 }
 

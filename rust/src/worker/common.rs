@@ -1,36 +1,39 @@
-use hash_hasher::HashedMap;
-use nohash_hasher::IntMap;
 use parking_lot::Mutex;
-use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use uuid::Uuid;
 
-struct EventHandlersList<F> {
+struct EventHandlersList<V: Clone + 'static> {
     index: usize,
-    callbacks: IntMap<usize, F>,
+    #[allow(clippy::type_complexity)]
+    callbacks: HashMap<usize, Arc<Box<dyn Fn(V) + Send + Sync>>>,
 }
 
-impl<F> Default for EventHandlersList<F> {
+impl<V: Clone + 'static> Default for EventHandlersList<V> {
     fn default() -> Self {
         Self {
             index: 0,
-            callbacks: IntMap::default(),
+            callbacks: HashMap::new(),
         }
     }
 }
 
 #[derive(Clone)]
-pub(super) struct EventHandlers<F> {
-    handlers: Arc<Mutex<HashedMap<SubscriptionTarget, EventHandlersList<F>>>>,
+pub(super) struct EventHandlers<V: Clone + 'static> {
+    handlers: Arc<Mutex<HashMap<SubscriptionTarget, EventHandlersList<V>>>>,
 }
 
-impl<F: Sized + Send + Sync + 'static> EventHandlers<F> {
+impl<V: Clone + 'static> EventHandlers<V> {
     pub(super) fn new() -> Self {
-        let handlers = Arc::<Mutex<HashedMap<SubscriptionTarget, EventHandlersList<F>>>>::default();
+        let handlers = Arc::<Mutex<HashMap<SubscriptionTarget, EventHandlersList<V>>>>::default();
         Self { handlers }
     }
 
-    pub(super) fn add(&self, target_id: SubscriptionTarget, callback: F) -> SubscriptionHandler {
+    pub(super) fn add(
+        &self,
+        target_id: SubscriptionTarget,
+        callback: Box<dyn Fn(V) + Send + Sync + 'static>,
+    ) -> SubscriptionHandler {
         let index;
         {
             let mut event_handlers = self.handlers.lock();
@@ -39,7 +42,7 @@ impl<F: Sized + Send + Sync + 'static> EventHandlers<F> {
                 .or_insert_with(EventHandlersList::default);
             index = list.index;
             list.index += 1;
-            list.callbacks.insert(index, callback);
+            list.callbacks.insert(index, Arc::new(Box::new(callback)));
             drop(event_handlers);
         }
 
@@ -72,72 +75,54 @@ impl<F: Sized + Send + Sync + 'static> EventHandlers<F> {
         })
     }
 
-    pub(super) fn downgrade(&self) -> WeakEventHandlers<F> {
+    pub(super) fn call_callbacks_with_value(&self, target_id: &SubscriptionTarget, value: V) {
+        let handlers = self.handlers.lock();
+        if let Some(list) = handlers.get(target_id) {
+            // Tiny optimization that avoids cloning `value` unless necessary
+            if list.callbacks.len() == 1 {
+                let callback = list.callbacks.values().next().cloned().unwrap();
+                // Drop mutex guard before running callbacks to avoid deadlocks
+                drop(handlers);
+                callback(value);
+            } else {
+                let callbacks = list.callbacks.values().cloned().collect::<Vec<_>>();
+                // Drop mutex guard before running callbacks to avoid deadlocks
+                drop(handlers);
+                for callback in callbacks {
+                    callback(value.clone());
+                }
+            }
+        }
+    }
+
+    pub(super) fn downgrade(&self) -> WeakEventHandlers<V> {
         WeakEventHandlers {
             handlers: Arc::downgrade(&self.handlers),
         }
     }
 }
 
-impl<V: ?Sized> EventHandlers<Arc<dyn Fn(&V) + Send + Sync + 'static>> {
-    pub(super) fn call_callbacks_with_single_value(
-        &self,
-        target_id: &SubscriptionTarget,
-        value: &V,
-    ) {
-        let handlers = self.handlers.lock();
-        if let Some(list) = handlers.get(target_id) {
-            for callback in list.callbacks.values() {
-                callback(value);
-            }
-        }
-    }
-}
-
-impl<V1: ?Sized, V2: ?Sized> EventHandlers<Arc<dyn Fn(&V1, &V2) + Send + Sync + 'static>> {
-    pub(super) fn call_callbacks_with_two_values(
-        &self,
-        target_id: &SubscriptionTarget,
-        value1: &V1,
-        value2: &V2,
-    ) {
-        let handlers = self.handlers.lock();
-        if let Some(list) = handlers.get(target_id) {
-            for callback in list.callbacks.values() {
-                callback(value1, value2);
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
-pub(super) struct WeakEventHandlers<F> {
-    handlers: Weak<Mutex<HashedMap<SubscriptionTarget, EventHandlersList<F>>>>,
+pub(super) struct WeakEventHandlers<V: Clone + 'static> {
+    handlers: Weak<Mutex<HashMap<SubscriptionTarget, EventHandlersList<V>>>>,
 }
 
-impl<F> WeakEventHandlers<F> {
-    pub(super) fn upgrade(&self) -> Option<EventHandlers<F>> {
+impl<V: Clone + 'static> WeakEventHandlers<V> {
+    pub(super) fn upgrade(&self) -> Option<EventHandlers<V>> {
         self.handlers
             .upgrade()
             .map(|handlers| EventHandlers { handlers })
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Deserialize)]
-#[serde(untagged)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub(crate) enum SubscriptionTarget {
     Uuid(Uuid),
-    Number(u64),
+    Number(u32),
 }
 
 impl From<u32> for SubscriptionTarget {
     fn from(number: u32) -> Self {
-        Self::Number(u64::from(number))
-    }
-}
-
-impl From<u64> for SubscriptionTarget {
-    fn from(number: u64) -> Self {
         Self::Number(number)
     }
 }

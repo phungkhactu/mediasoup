@@ -721,7 +721,10 @@ namespace RTC
 	}
 
 	void WebRtcTransport::SendRtpPacket(
-	  RTC::Consumer* /*consumer*/, RTC::RtpPacket* packet, RTC::Transport::onSendCallback* cb)
+	  RTC::Consumer* /*consumer*/,
+	  RTC::RtpPacket* packet,
+	  RTC::Transport::onSendCallback* cb,
+	  RTC::Transport::OnSendCallbackCtx* ctx)
 	{
 		MS_TRACE();
 
@@ -729,8 +732,7 @@ namespace RTC
 		{
 			if (cb)
 			{
-				(*cb)(false);
-				delete cb;
+				(*cb)(false, ctx);
 			}
 
 			return;
@@ -743,8 +745,7 @@ namespace RTC
 
 			if (cb)
 			{
-				(*cb)(false);
-				delete cb;
+				(*cb)(false, ctx);
 			}
 
 			return;
@@ -757,8 +758,7 @@ namespace RTC
 		{
 			if (cb)
 			{
-				(*cb)(false);
-				delete cb;
+				(*cb)(false, ctx);
 			}
 
 			return;
@@ -766,7 +766,7 @@ namespace RTC
 
 		auto len = static_cast<size_t>(intLen);
 
-		this->iceServer->GetSelectedTuple()->Send(data, len, cb);
+		this->iceServer->GetSelectedTuple()->Send(data, len, cb, ctx);
 
 		// Increase send transmission.
 		RTC::Transport::DataSent(len);
@@ -994,7 +994,7 @@ namespace RTC
 
 		if (!this->srtpRecvSession->DecryptSrtp(const_cast<uint8_t*>(data), &intLen))
 		{
-			RTC::RtpPacket* packet = RTC::RtpPacket::Parse(data, static_cast<size_t>(intLen));
+			auto packet = RTC::RtpPacket::Parse(data, static_cast<size_t>(intLen));
 
 			if (!packet)
 			{
@@ -1008,14 +1008,12 @@ namespace RTC
 				  packet->GetSsrc(),
 				  packet->GetPayloadType(),
 				  packet->GetSequenceNumber());
-
-				delete packet;
 			}
 
 			return;
 		}
 
-		RTC::RtpPacket* packet = RTC::RtpPacket::Parse(data, static_cast<size_t>(intLen));
+		auto packet = RTC::RtpPacket::Parse(data, static_cast<size_t>(intLen));
 
 		if (!packet)
 		{
@@ -1028,7 +1026,7 @@ namespace RTC
 		this->iceServer->ForceSelectedTuple(tuple);
 
 		// Pass the packet to the parent transport.
-		RTC::Transport::ReceiveRtpPacket(packet);
+		RTC::Transport::ReceiveRtpPacket(packet.get());
 	}
 
 	inline void WebRtcTransport::OnRtcpDataReceived(

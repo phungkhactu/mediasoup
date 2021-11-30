@@ -23,22 +23,14 @@ int main(int argc, char* argv[])
 
 	std::string version = std::getenv("MEDIASOUP_VERSION");
 
-	auto statusCode = mediasoup_worker_run(
+	auto statusCode = run_worker(
 	  argc,
 	  argv,
 	  version.c_str(),
 	  ConsumerChannelFd,
 	  ProducerChannelFd,
 	  PayloadConsumerChannelFd,
-	  PayloadProducerChannelFd,
-	  nullptr,
-	  nullptr,
-	  nullptr,
-	  nullptr,
-	  nullptr,
-	  nullptr,
-	  nullptr,
-	  nullptr);
+	  PayloadProducerChannelFd);
 
 	switch (statusCode)
 	{

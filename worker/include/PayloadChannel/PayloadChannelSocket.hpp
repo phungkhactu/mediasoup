@@ -71,24 +71,16 @@ namespace PayloadChannel
 
 	public:
 		explicit PayloadChannelSocket(int consumerFd, int producerFd);
-		explicit PayloadChannelSocket(
-		  PayloadChannelReadFn payloadChannelReadFn,
-		  PayloadChannelReadCtx payloadChannelReadCtx,
-		  PayloadChannelWriteFn payloadChannelWriteFn,
-		  PayloadChannelWriteCtx payloadChannelWriteCtx);
 		virtual ~PayloadChannelSocket();
 
 	public:
 		void Close();
 		void SetListener(Listener* listener);
-		bool CallbackRead();
 		void Send(json& jsonMessage, const uint8_t* payload, size_t payloadLen);
 		void Send(json& jsonMessage);
 
 	private:
-		void SendImpl(const uint8_t* message, uint32_t messageLen);
-		void SendImpl(
-		  const uint8_t* message, uint32_t messageLen, const uint8_t* payload, uint32_t payloadLen);
+		void SendImpl(const void* payload, uint32_t payloadLen);
 
 		/* Pure virtual methods inherited from ConsumerSocket::Listener. */
 	public:
@@ -100,16 +92,11 @@ namespace PayloadChannel
 		Listener* listener{ nullptr };
 		// Others.
 		bool closed{ false };
-		ConsumerSocket* consumerSocket{ nullptr };
-		ProducerSocket* producerSocket{ nullptr };
-		PayloadChannelReadFn payloadChannelReadFn{ nullptr };
-		PayloadChannelReadCtx payloadChannelReadCtx{ nullptr };
-		PayloadChannelWriteFn payloadChannelWriteFn{ nullptr };
-		PayloadChannelWriteCtx payloadChannelWriteCtx{ nullptr };
+		ConsumerSocket consumerSocket;
+		ProducerSocket producerSocket;
 		PayloadChannel::Notification* ongoingNotification{ nullptr };
 		PayloadChannel::PayloadChannelRequest* ongoingRequest{ nullptr };
-		uv_async_t* uvReadHandle{ nullptr };
-		uint8_t* writeBuffer{ nullptr };
+		uint8_t* writeBuffer;
 	};
 } // namespace PayloadChannel
 

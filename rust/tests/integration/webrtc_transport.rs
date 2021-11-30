@@ -1,5 +1,4 @@
 use futures_lite::future;
-use hash_hasher::HashedSet;
 use mediasoup::data_structures::{
     AppData, DtlsFingerprint, DtlsParameters, DtlsRole, DtlsState, IceCandidateTcpType,
     IceCandidateType, IceRole, IceState, SctpState, TransportListenIp, TransportProtocol,
@@ -16,6 +15,7 @@ use mediasoup::webrtc_transport::{
 };
 use mediasoup::worker::{RequestError, Worker, WorkerSettings};
 use mediasoup::worker_manager::WorkerManager;
+use std::collections::HashSet;
 use std::convert::TryInto;
 use std::env;
 use std::net::IpAddr;
@@ -104,7 +104,7 @@ fn create_succeeds() {
 
             let router_dump = router.dump().await.expect("Failed to dump router");
             assert_eq!(router_dump.transport_ids, {
-                let mut set = HashedSet::default();
+                let mut set = HashSet::new();
                 set.insert(transport.id());
                 set
             });

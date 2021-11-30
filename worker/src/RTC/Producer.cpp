@@ -11,6 +11,7 @@
 #include "RTC/RTCP/FeedbackPs.hpp"
 #include "RTC/RTCP/FeedbackRtp.hpp"
 #include "RTC/RTCP/XrReceiverReferenceTime.hpp"
+#include <absl/container/inlined_vector.h>
 #include <cstring>  // std::memcpy()
 #include <iterator> // std::ostream_iterator
 #include <sstream>  // std::ostringstream
@@ -751,12 +752,14 @@ namespace RTC
 		rtpStream->ReceiveRtcpXrDelaySinceLastRr(ssrcInfo);
 	}
 
-	void Producer::GetRtcp(RTC::RTCP::CompoundPacket* packet, uint64_t nowMs)
+	RTC::RTCP::CompoundPacket::UniquePtr Producer::GetRtcp(uint64_t nowMs)
 	{
 		MS_TRACE();
 
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+			return nullptr;
+
+		auto packet = RTC::RTCP::CompoundPacket::Create();
 
 		for (auto& kv : this->mapSsrcRtpStream)
 		{
@@ -783,6 +786,8 @@ namespace RTC
 		}
 
 		this->lastRtcpSentTime = nowMs;
+
+		return packet;
 	}
 
 	void Producer::RequestKeyFrame(uint32_t mappedSsrc)

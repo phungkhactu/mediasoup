@@ -29,6 +29,31 @@ namespace RTC
 {
 	static size_t DefaultSctpSendBufferSize{ 262144 }; // 2^18.
 	static size_t MaxSctpSendBufferSize{ 268435456 };  // 2^28.
+	thread_local static Utils::ObjectPool<Transport::OnSendCallbackCtx> TransportOnSendCallbackCtxPool;
+
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+	void Transport::OnSendCallback(bool sent, OnSendCallbackCtx* ctx)
+	{
+		if (sent)
+		{
+			ctx->tccClient->PacketSent(ctx->packetInfo, DepLibUV::GetTimeMsInt64());
+
+			ctx->sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+
+			ctx->senderBwe->RtpPacketSent(ctx->sentInfo);
+		}
+
+		TransportOnSendCallbackCtxPool.Return(ctx);
+	}
+#else
+	void Transport::OnSendCallback(bool sent, OnSendCallbackCtx* ctx)
+	{
+		if (sent)
+			ctx->tccClient->PacketSent(ctx->packetInfo, DepLibUV::GetTimeMsInt64());
+
+		TransportOnSendCallbackCtxPool.Return(ctx);
+	}
+#endif
 
 	/* Instance methods. */
 
@@ -1680,8 +1705,6 @@ namespace RTC
 			// Tell the child class to remove this SSRC.
 			RecvStreamClosed(packet->GetSsrc());
 
-			delete packet;
-
 			return;
 		}
 
@@ -1708,8 +1731,6 @@ namespace RTC
 				break;
 			default:;
 		}
-
-		delete packet;
 	}
 
 	void Transport::ReceiveRtcpPacket(RTC::RTCP::Packet* packet)
@@ -2291,21 +2312,18 @@ namespace RTC
 	{
 		MS_TRACE();
 
-		std::unique_ptr<RTC::RTCP::CompoundPacket> packet{ nullptr };
+		RTC::RTCP::CompoundPacket::UniquePtr packet(nullptr);
 
 		for (auto& kv : this->mapConsumers)
 		{
 			auto* consumer = kv.second;
 
-			for (auto* rtpStream : consumer->GetRtpStreams())
+			for (const auto& rtpStream : consumer->GetRtpStreams())
 			{
-				// Reset the Compound packet.
-				packet.reset(new RTC::RTCP::CompoundPacket());
-
-				consumer->GetRtcp(packet.get(), rtpStream, nowMs);
+				packet = consumer->GetRtcp(rtpStream, nowMs);
 
 				// Send the RTCP compound packet if there is a sender report.
-				if (packet->HasSenderReport())
+				if (packet != nullptr && packet->HasSenderReport())
 				{
 					packet->Serialize(RTC::RTCP::Buffer);
 					SendRtcpCompoundPacket(packet.get());
@@ -2314,26 +2332,25 @@ namespace RTC
 		}
 
 		// Reset the Compound packet.
-		packet.reset(new RTC::RTCP::CompoundPacket());
+		packet = nullptr;
 
 		for (auto& kv : this->mapProducers)
 		{
 			auto* producer = kv.second;
 
-			producer->GetRtcp(packet.get(), nowMs);
+			packet = producer->GetRtcp(nowMs);
 
 			// One more RR would exceed the MTU, send the compound packet now.
-			if (packet->GetSize() + sizeof(RTCP::ReceiverReport::Header) > RTC::MtuSize)
+			if (packet != nullptr && packet->GetSize() + sizeof(RTCP::ReceiverReport::Header) > RTC::MtuSize)
 			{
 				packet->Serialize(RTC::RTCP::Buffer);
 				SendRtcpCompoundPacket(packet.get());
 
-				// Reset the Compound packet.
-				packet.reset(new RTC::RTCP::CompoundPacket());
+				packet = nullptr;
 			}
 		}
 
-		if (packet->GetReceiverReportCount() != 0u)
+		if (packet != nullptr && packet->GetReceiverReportCount() != 0u)
 		{
 			packet->Serialize(RTC::RTCP::Buffer);
 			SendRtcpCompoundPacket(packet.get());
@@ -2577,7 +2594,6 @@ namespace RTC
 		{
 			this->transportWideCcSeq++;
 
-			auto* tccClient = this->tccClient;
 			webrtc::RtpPacketSendInfo packetInfo;
 
 			packetInfo.ssrc                      = packet->GetSsrc();
@@ -2590,6 +2606,7 @@ namespace RTC
 			// Indicate the pacer (and prober) that a packet is to be sent.
 			this->tccClient->InsertPacket(packetInfo);
 
+			auto* ctx = TransportOnSendCallbackCtxPool.Allocate();
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			auto* senderBwe = this->senderBwe;
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
@@ -2598,30 +2615,15 @@ namespace RTC
 			sentInfo.size        = packet->GetSize();
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo, senderBwe, &sentInfo](bool sent)
-			  {
-				  if (sent)
-				  {
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-
-					  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
-
-					  senderBwe->RtpPacketSent(sentInfo);
-				  }
-			  });
-
-			SendRtpPacket(consumer, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
+			ctx->senderBwe  = senderBwe;
+			ctx->sentInfo   = sentInfo;
 #else
-			const auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo](bool sent)
-			  {
-				  if (sent)
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-			  });
-
-			SendRtpPacket(consumer, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
 #endif
+			SendRtpPacket(consumer, packet, OnSendCallback, ctx);
 		}
 		else
 		{
@@ -2649,7 +2651,6 @@ namespace RTC
 		{
 			this->transportWideCcSeq++;
 
-			auto* tccClient = this->tccClient;
 			webrtc::RtpPacketSendInfo packetInfo;
 
 			packetInfo.ssrc                      = packet->GetSsrc();
@@ -2662,6 +2663,7 @@ namespace RTC
 			// Indicate the pacer (and prober) that a packet is to be sent.
 			this->tccClient->InsertPacket(packetInfo);
 
+			auto* ctx = TransportOnSendCallbackCtxPool.Allocate();
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			auto* senderBwe = this->senderBwe;
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
@@ -2670,30 +2672,15 @@ namespace RTC
 			sentInfo.size        = packet->GetSize();
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo, senderBwe, &sentInfo](bool sent)
-			  {
-				  if (sent)
-				  {
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-
-					  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
-
-					  senderBwe->RtpPacketSent(sentInfo);
-				  }
-			  });
-
-			SendRtpPacket(consumer, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
+			ctx->senderBwe  = senderBwe;
+			ctx->sentInfo   = sentInfo;
 #else
-			const auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo](bool sent)
-			  {
-				  if (sent)
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-			  });
-
-			SendRtpPacket(consumer, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
 #endif
+			SendRtpPacket(consumer, packet, OnSendCallback, ctx);
 		}
 		else
 		{
@@ -3000,6 +2987,7 @@ namespace RTC
 			// Indicate the pacer (and prober) that a packet is to be sent.
 			this->tccClient->InsertPacket(packetInfo);
 
+			auto* ctx = TransportOnSendCallbackCtxPool.Allocate();
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 			auto* senderBwe = this->senderBwe;
 			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
@@ -3009,30 +2997,15 @@ namespace RTC
 			sentInfo.isProbation = true;
 			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
 
-			auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo, senderBwe, &sentInfo](bool sent)
-			  {
-				  if (sent)
-				  {
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-
-					  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
-
-					  senderBwe->RtpPacketSent(sentInfo);
-				  }
-			  });
-
-			SendRtpPacket(nullptr, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
+			ctx->senderBwe  = senderBwe;
+			ctx->sentInfo   = sentInfo;
 #else
-			const auto* cb = new onSendCallback(
-			  [tccClient, &packetInfo](bool sent)
-			  {
-				  if (sent)
-					  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
-			  });
-
-			SendRtpPacket(nullptr, packet, cb);
+			ctx->tccClient  = this->tccClient;
+			ctx->packetInfo = packetInfo;
 #endif
+			SendRtpPacket(nullptr, packet, OnSendCallback, ctx);
 		}
 		else
 		{
