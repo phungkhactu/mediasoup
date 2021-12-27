@@ -1,32 +1,48 @@
-# Prerequisites
-*.d
+/node_modules/
+/coverage/
+/NO_GIT/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Generated stuff.
+/worker/out/
 
-# Precompiled Headers
-*.gch
-*.pch
+# clang-fuzzer stuff is too big.
+/worker/deps/clang-fuzzer
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# Ignore all fuzzer generated test inputs.
+/worker/fuzzer/new-corpus/*
+!/worker/fuzzer/new-corpus/.placeholder
 
-# Fortran module files
-*.mod
-*.smod
+# Vim temporal files.
+*.swp
+*.swo
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# Mac Stuff.
+.DS_Store
 
-# Executables
-*.exe
-*.out
-*.app
+# worker scripts node-modules.
+/worker/scripts/node_modules/
+
+# Vistual Studio generated Stuff.
+/worker/**/Debug/
+/worker/**/Release/
+/worker/.vs/
+
+# Vistual Studio Code stuff.
+/.vscode/
+
+# JetBrains IDE stuff.
+/.idea/
+
+# Rust.
+/target
+/Cargo.lock
+
+# Rust examples.
+/rust/examples-frontend/*/node_modules
+/rust/examples-frontend/*/package-lock.json
+
+# Meson.
+/worker/subprojects/*
+!/worker/subprojects/*.wrap
+# Temporarily included meson.build files
+!/worker/subprojects/packagefiles
