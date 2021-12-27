@@ -249,6 +249,8 @@ impl Inner {
 
             self.handlers.close.call_simple();
 
+            let subscription_handler = self.subscription_handler.lock().take();
+
             if close_request {
                 let channel = self.channel.clone();
                 let request = TransportCloseRequest {
@@ -262,6 +264,14 @@ impl Inner {
                         if let Err(error) = channel.request(request).await {
                             error!("transport closing failed on drop: {}", error);
                         }
+                    })
+                    .detach();
+            } else {
+                self.executor
+                    .spawn(async move {
+                        // Drop from a different thread to avoid deadlock with recursive dropping
+                        // from within another subscription drop.
+                        drop(subscription_handler);
                     })
                     .detach();
             }
@@ -290,7 +300,7 @@ impl fmt::Debug for PlainTransport {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Transport for PlainTransport {
     fn id(&self) -> TransportId {
         self.inner.id
@@ -435,7 +445,7 @@ impl Transport for PlainTransport {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TransportGeneric for PlainTransport {
     type Dump = PlainTransportDump;
     type Stat = PlainTransportStat;

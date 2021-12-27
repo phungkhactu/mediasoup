@@ -168,6 +168,8 @@ impl Inner {
 
             self.handlers.close.call_simple();
 
+            let subscription_handlers: Vec<_> = mem::take(&mut self.subscription_handlers.lock());
+
             if close_request {
                 let channel = self.channel.clone();
                 let request = TransportCloseRequest {
@@ -183,6 +185,14 @@ impl Inner {
                         }
                     })
                     .detach();
+            } else {
+                self.executor
+                    .spawn(async move {
+                        // Drop from a different thread to avoid deadlock with recursive dropping
+                        // from within another subscription drop.
+                        drop(subscription_handlers);
+                    })
+                    .detach()
             }
         }
     }
@@ -223,7 +233,7 @@ impl fmt::Debug for DirectTransport {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Transport for DirectTransport {
     /// Transport id.
     fn id(&self) -> TransportId {
@@ -382,7 +392,7 @@ impl Transport for DirectTransport {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TransportGeneric for DirectTransport {
     type Dump = DirectTransportDump;
     type Stat = DirectTransportStat;

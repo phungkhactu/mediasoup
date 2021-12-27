@@ -116,6 +116,8 @@ impl Inner {
 
             self.handlers.close.call_simple();
 
+            let subscription_handler = self.subscription_handler.lock().take();
+
             if close_request {
                 let channel = self.channel.clone();
                 let request = RtpObserverCloseRequest {
@@ -129,6 +131,14 @@ impl Inner {
                         if let Err(error) = channel.request(request).await {
                             error!("audio level observer closing failed on drop: {}", error);
                         }
+                    })
+                    .detach();
+            } else {
+                self.executor
+                    .spawn(async move {
+                        // Drop from a different thread to avoid deadlock with recursive dropping
+                        // from within another subscription drop.
+                        drop(subscription_handler);
                     })
                     .detach();
             }
