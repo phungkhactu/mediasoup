@@ -84,6 +84,9 @@ namespace RTC
 		void MayEmitAvailableBitrateEvent(uint32_t previousAvailableBitrate);
 		void UpdatePacketLoss(double packetLoss);
 
+		void InitializeController();
+		void DestroyController();
+
 		// jmillan: missing.
 		// void OnRemoteNetworkEstimate(NetworkStateEstimate estimate) override;
 
@@ -94,7 +97,7 @@ namespace RTC
 		/* Pure virtual methods inherited from webrtc::PacketRouter. */
 	public:
 		void SendPacket(RTC::RtpPacket* packet, const webrtc::PacedPacketInfo& pacingInfo) override;
-		RTC::RtpPacket::SharedPtr GeneratePadding(size_t size) override;
+		RTC::RtpPacket* GeneratePadding(size_t size) override;
 
 		/* Pure virtual methods inherited from RTC::Timer. */
 	public:
