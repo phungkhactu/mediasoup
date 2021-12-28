@@ -477,7 +477,7 @@ namespace RTC
 		this->listener->OnTransportCongestionControlClientSendRtpPacket(this, packet, pacingInfo);
 	}
 
-	RTC::RtpPacket* TransportCongestionControlClient::GeneratePadding(size_t size)
+	RTC::RtpPacket::SharedPtr TransportCongestionControlClient::GeneratePadding(size_t size)
 	{
 		MS_TRACE();
 		MS_ASSERT(this->probationGenerator, "probation generator not initialized")
