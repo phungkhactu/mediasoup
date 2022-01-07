@@ -170,6 +170,18 @@ class Worker extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         });
     }
     /**
+     * Get pid of worker.
+     */
+    pid() {
+        return this.#pid;
+    }
+    /**
+     * gey routers in worker.
+     */
+    routers() {
+        return this.#routers;
+    }
+    /**
      * Worker process identifier (PID).
      */
     get pid() {

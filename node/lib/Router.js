@@ -54,6 +54,12 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         this.#appData = appData;
     }
     /**
+    * get internal
+    */
+    internal() {
+        return this.#internal;
+    }
+    /**
      * Router id.
      */
     get id() {
@@ -363,6 +369,27 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         // Emit observer event.
         this.#observer.safeEmit('newtransport', transport);
         return transport;
+    }
+
+    async pipeToRouterCreatePipeTransport({ listenIp = '0.0.0.0', enableSctp = true, numSctpStreams = { OS: 1024, MIS: 1024 }, enableRtx = false, enableSrtp = false }) {
+        let localPipeTransport = await this.createPipeTransport({ listenIp, enableSctp, numSctpStreams, enableRtx, enableSrtp });
+        return localPipeTransport;
+    }
+    async pipeToRouterConnect({localPipeTransport, localIp, localPort, srtpParameters}) {
+        await localPipeTransport.connect({
+            ip: localIp,
+            port: localPort,
+            srtpParameters: srtpParameters
+        })
+    }
+    async pipeToRouterProduce({localPipeTransport, producerId, producerAppData, kind, rtpParameters, paused}) {
+        await localPipeTransport.produce({
+            id: producerId,
+            kind: kind,
+            rtpParameters: rtpParameters,
+            paused: paused,
+            appData: producerAppData
+        });
     }
     /**
      * Pipes the given Producer or DataProducer into another Router in same host.
