@@ -56,8 +56,14 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
     /**
     * get internal
     */
-    internal() {
+    getInternal() {
         return this.#internal;
+    }
+    /**
+    * get producers
+    */
+    getProducers() {
+        return this.#producers;
     }
     /**
      * Router id.
