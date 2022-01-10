@@ -42,10 +42,7 @@ inline static void onSend(uv_udp_send_t* req, int status)
 	if (socket)
 		socket->OnUvSend(status, cb, ctx);
 	else if (cb)
-	{
 		(*cb)(false, ctx);
-		delete cb;
-	}
 
 	// Delete the UvSendData struct (it will delete the store too).
 	delete sendData;
@@ -138,7 +135,6 @@ void UdpSocketHandler::Send(
 		if (cb)
 		{
 			(*cb)(false, ctx);
-			delete cb;
 		}
 
 		return;
@@ -149,7 +145,6 @@ void UdpSocketHandler::Send(
 		if (cb)
 		{
 			(*cb)(false, ctx);
-			delete cb;
 		}
 
 		return;
@@ -170,7 +165,6 @@ void UdpSocketHandler::Send(
 		if (cb)
 		{
 			(*cb)(true, ctx);
-			delete cb;
 		}
 
 		return;
@@ -185,7 +179,6 @@ void UdpSocketHandler::Send(
 		if (cb)
 		{
 			(*cb)(false, ctx);
-			delete cb;
 		}
 
 		return;

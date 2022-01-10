@@ -7,6 +7,14 @@ fn main() {
         return;
     }
 
+    // On Windows Rust always links against release version of MSVC runtime, thus requires Release
+    // build here.
+    let build_type = if cfg!(all(debug_assertions, not(windows))) {
+        "Debug"
+    } else {
+        "Release"
+    };
+
     let out_dir = env::var("OUT_DIR").unwrap();
     // Force forward slashes on Windows too so that is plays well with our dumb `Makefile`
     let mediasoup_out_dir = format!("{}/out", out_dir.replace('\\', "/"));
@@ -69,8 +77,7 @@ fn main() {
     }
     #[cfg(target_os = "windows")]
     {
-        panic!("Building on Windows is not currently supported");
-        // TODO: Didn't bother, feel free to PR
+        // Nothing special is needed so far
     }
 
     // Build
