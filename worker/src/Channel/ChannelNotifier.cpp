@@ -19,20 +19,6 @@ namespace Channel
 		ChannelNotifier::channel = channel;
 	}
 
-	void ChannelNotifier::Emit(uint64_t targetId, const char* event)
-	{
-		MS_TRACE();
-
-		MS_ASSERT(ChannelNotifier::channel, "channel unset");
-
-		json jsonNotification = json::object();
-
-		jsonNotification["targetId"] = targetId;
-		jsonNotification["event"]    = event;
-
-		ChannelNotifier::channel->Send(jsonNotification);
-	}
-
 	void ChannelNotifier::Emit(const std::string& targetId, const char* event)
 	{
 		MS_TRACE();

@@ -37,10 +37,8 @@ mod room {
 
     #[derive(Default)]
     struct Handlers {
-        producer_add:
-            Bag<Arc<dyn Fn(&ParticipantId, &Producer) + Send + Sync>, ParticipantId, Producer>,
-        producer_remove:
-            Bag<Arc<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync>, ParticipantId, ProducerId>,
+        producer_add: Bag<Box<dyn Fn(&ParticipantId, &Producer) + Send + Sync>>,
+        producer_remove: Bag<Box<dyn Fn(&ParticipantId, &ProducerId) + Send + Sync>>,
         close: BagOnce<Box<dyn FnOnce() + Send>>,
     }
 
@@ -148,10 +146,9 @@ mod room {
                 .or_default()
                 .push(producer.clone());
 
-            self.inner
-                .handlers
-                .producer_add
-                .call_simple(&participant_id, &producer);
+            self.inner.handlers.producer_add.call(|callback| {
+                callback(&participant_id, &producer);
+            });
         }
 
         /// Remove participant and all of its associated producers
@@ -160,10 +157,9 @@ mod room {
 
             for producer in producers.unwrap_or_default() {
                 let producer_id = &producer.id();
-                self.inner
-                    .handlers
-                    .producer_remove
-                    .call_simple(participant_id, producer_id);
+                self.inner.handlers.producer_remove.call(|callback| {
+                    callback(participant_id, producer_id);
+                });
             }
         }
 
@@ -189,7 +185,7 @@ mod room {
             &self,
             callback: F,
         ) -> HandlerId {
-            self.inner.handlers.producer_add.add(Arc::new(callback))
+            self.inner.handlers.producer_add.add(Box::new(callback))
         }
 
         /// Subscribe to notifications when producer is removed from the room
@@ -197,7 +193,7 @@ mod room {
             &self,
             callback: F,
         ) -> HandlerId {
-            self.inner.handlers.producer_remove.add(Arc::new(callback))
+            self.inner.handlers.producer_remove.add(Box::new(callback))
         }
 
         /// Subscribe to notification when room is closed

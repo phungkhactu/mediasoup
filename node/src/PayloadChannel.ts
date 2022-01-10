@@ -354,7 +354,7 @@ export class PayloadChannel extends EnhancedEventEmitter
 			{
 				this.#ongoingNotification =
 					{
-						targetId : String(msg.targetId),
+						targetId : msg.targetId,
 						event    : msg.event,
 						data     : msg.data
 					};

@@ -695,15 +695,23 @@ namespace RTC
 
 		auto& consumers = this->mapProducerConsumers.at(producer);
 
-		for (auto* consumer : consumers)
+		if (!consumers.empty())
 		{
-			// Update MID RTP extension value.
-			const auto& mid = consumer->GetRtpParameters().mid;
+			// Cloned ref-counted packet that consumers will all store for as long as needed
+			// while also avoiding multiple allocations unless absolutely necessary.
+			// Clone only happens if needed though.
+			RtpPacket::SharedPtr clonedPacket{ nullptr };
 
-			if (!mid.empty())
-				packet->UpdateMid(mid);
+			for (auto* consumer : consumers)
+			{
+				// Update MID RTP extension value.
+				const auto& mid = consumer->GetRtpParameters().mid;
 
-			consumer->SendRtpPacket(packet);
+				if (!mid.empty())
+					packet->UpdateMid(mid);
+
+				consumer->SendRtpPacket(packet, &clonedPacket);
+			}
 		}
 
 		auto it = this->mapProducerRtpObservers.find(producer);

@@ -26,9 +26,9 @@
 #include "RTC/TransportCongestionControlClient.hpp"
 #include "RTC/TransportCongestionControlServer.hpp"
 #include "handles/Timer.hpp"
+#include <absl/container/flat_hash_map.h>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -47,8 +47,27 @@ namespace RTC
 	                  public Timer::Listener
 	{
 	protected:
-		using onSendCallback   = const std::function<void(bool sent)>;
 		using onQueuedCallback = const std::function<void(bool queued, bool sctpSendBufferFull)>;
+
+	public:
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+		struct OnSendCallbackCtx
+		{
+			RTC::TransportCongestionControlClient* tccClient;
+			webrtc::RtpPacketSendInfo packetInfo;
+			RTC::SenderBandwidthEstimator* senderBwe;
+			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
+		};
+#else
+		struct OnSendCallbackCtx
+		{
+			RTC::TransportCongestionControlClient* tccClient;
+			webrtc::RtpPacketSendInfo packetInfo;
+		};
+#endif
+		// This function MUST NOT be de-allocated manually and MUST be called EXACTLY once
+		static void OnSendCallback(bool sent, OnSendCallbackCtx* ctx);
+		using onSendCallback = void(bool sent, OnSendCallbackCtx* ctx);
 
 	public:
 		class Listener
@@ -157,7 +176,10 @@ namespace RTC
 	private:
 		virtual bool IsConnected() const = 0;
 		virtual void SendRtpPacket(
-		  RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) = 0;
+		  RTC::Consumer* consumer,
+		  RTC::RtpPacket* packet,
+		  onSendCallback* cb     = nullptr,
+		  OnSendCallbackCtx* ctx = nullptr) = 0;
 		void HandleRtcpPacket(RTC::RTCP::Packet* packet);
 		void SendRtcp(uint64_t nowMs);
 		virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
@@ -273,12 +295,12 @@ namespace RTC
 		// Passed by argument.
 		Listener* listener{ nullptr };
 		// Allocated by this.
-		std::unordered_map<std::string, RTC::Producer*> mapProducers;
-		std::unordered_map<std::string, RTC::Consumer*> mapConsumers;
-		std::unordered_map<std::string, RTC::DataProducer*> mapDataProducers;
-		std::unordered_map<std::string, RTC::DataConsumer*> mapDataConsumers;
-		std::unordered_map<uint32_t, RTC::Consumer*> mapSsrcConsumer;
-		std::unordered_map<uint32_t, RTC::Consumer*> mapRtxSsrcConsumer;
+		absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
+		absl::flat_hash_map<std::string, RTC::Consumer*> mapConsumers;
+		absl::flat_hash_map<std::string, RTC::DataProducer*> mapDataProducers;
+		absl::flat_hash_map<std::string, RTC::DataConsumer*> mapDataConsumers;
+		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapSsrcConsumer;
+		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapRtxSsrcConsumer;
 		Timer* rtcpTimer{ nullptr };
 		RTC::TransportCongestionControlClient* tccClient{ nullptr };
 		RTC::TransportCongestionControlServer* tccServer{ nullptr };

@@ -72,6 +72,18 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         return this.#internal.routerId;
     }
     /**
+    * get internal
+    */
+    getInternal() {
+        return this.#internal;
+    }
+    /**
+    * get producers
+    */
+    getProducers() {
+        return this.#producers;
+    }
+    /**
      * Whether the Router is closed.
      */
     get closed() {
@@ -377,6 +389,29 @@ class Router extends EnhancedEventEmitter_1.EnhancedEventEmitter {
         return transport;
     }
 
+    async pipeToRouterCreatePipeTransport({ listenIp = '0.0.0.0', enableSctp = true, numSctpStreams = { OS: 1024, MIS: 1024 }, enableRtx = false, enableSrtp = false }) {
+        let localPipeTransport = await this.createPipeTransport({ listenIp, enableSctp, numSctpStreams, enableRtx, enableSrtp });
+        return localPipeTransport;
+    }
+    async pipeToRouterConnect({localPipeTransport, localIp, localPort, srtpParameters}) {
+        await localPipeTransport.connect({
+            ip: localIp,
+            port: localPort,
+            srtpParameters: srtpParameters
+        })
+    }
+    async pipeToRouterProduce({localPipeTransport, producerId, producerAppData, kind, rtpParameters, paused}) {
+        await localPipeTransport.produce({
+            id: producerId,
+            kind: kind,
+            rtpParameters: rtpParameters,
+            paused: paused,
+            appData: producerAppData
+        });
+    }
+    /**
+     * Xây dựng các hàm để pipe to router ở nhiều host khác nhau
+     */
     async pipeToRouterCreatePipeTransport({ listenIp = '0.0.0.0', enableSctp = true, numSctpStreams = { OS: 1024, MIS: 1024 }, enableRtx = false, enableSrtp = false }) {
         let localPipeTransport = await this.createPipeTransport({ listenIp, enableSctp, numSctpStreams, enableRtx, enableSrtp });
         return localPipeTransport;

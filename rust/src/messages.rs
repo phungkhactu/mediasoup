@@ -28,8 +28,8 @@ use crate::worker::{WorkerDump, WorkerUpdateSettings};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::net::IpAddr;
 use std::num::NonZeroU16;
 
@@ -141,6 +141,32 @@ macro_rules! request_response {
 
         impl Request for $request_struct_name {
             type Response = $response_struct_name;
+
+            fn as_method(&self) -> &'static str {
+                $method
+            }
+        }
+    };
+}
+
+macro_rules! request_response_generic {
+    (
+        $method: literal,
+        $request_struct_name: ident { $( $request_field_name: ident: $request_field_type: ty$(,)? )* },
+        $generic_response: ident,
+    ) => {
+        #[derive(Debug, Serialize)]
+        pub(crate) struct $request_struct_name<$generic_response>
+        where
+            $generic_response: Debug + DeserializeOwned,
+        {
+            $( pub(crate) $request_field_name: $request_field_type, )*
+            #[serde(skip)]
+            pub(crate) phantom_data: PhantomData<$generic_response>,
+        }
+
+        impl<$generic_response: Debug + DeserializeOwned> Request for $request_struct_name<$generic_response> {
+            type Response = $generic_response;
 
             fn as_method(&self) -> &'static str {
                 $method
@@ -307,9 +333,8 @@ request_response!(
         data: RouterCreatePlainTransportData,
     },
     PlainTransportData {
-        // The following fields are present, but unused
-        // rtcp_mux: bool,
-        // comedia: bool,
+        rtcp_mux: bool,
+        comedia: bool,
         tuple: Mutex<TransportTuple>,
         rtcp_tuple: Mutex<Option<TransportTuple>>,
         sctp_parameters: Option<SctpParameters>,
@@ -421,20 +446,20 @@ request_response!(
     },
 );
 
-request_response!(
+request_response_generic!(
     "transport.dump",
     TransportDumpRequest {
         internal: TransportInternal,
     },
-    Value,
+    Dump,
 );
 
-request_response!(
+request_response_generic!(
     "transport.getStats",
     TransportGetStatsRequest {
         internal: TransportInternal,
     },
-    Value,
+    Stats,
 );
 
 #[derive(Debug, Serialize)]
@@ -445,7 +470,7 @@ pub(crate) struct TransportConnectRequestWebRtcData {
 
 request_response!(
     "transport.connect",
-    TransportConnectWebRtcRequest {
+    TransportConnectRequestWebRtc {
         internal: TransportInternal,
         data: TransportConnectRequestWebRtcData,
     },
@@ -465,7 +490,7 @@ pub(crate) struct TransportConnectRequestPipeData {
 
 request_response!(
     "transport.connect",
-    TransportConnectPipeRequest {
+    TransportConnectRequestPipe {
         internal: TransportInternal,
         data: TransportConnectRequestPipeData,
     },
@@ -489,7 +514,7 @@ pub(crate) struct TransportConnectRequestPlainData {
 
 request_response!(
     "transport.connect",
-    TransportConnectPlainRequest {
+    TransportConnectRequestPlain {
         internal: TransportInternal,
         data: TransportConnectRequestPlainData,
     },

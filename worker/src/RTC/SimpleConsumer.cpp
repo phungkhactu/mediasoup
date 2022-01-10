@@ -228,7 +228,7 @@ namespace RTC
 		return desiredBitrate;
 	}
 
-	void SimpleConsumer::SendRtpPacket(RTC::RtpPacket* packet)
+	void SimpleConsumer::SendRtpPacket(RTC::RtpPacket* packet, RTC::RtpPacket::SharedPtr* clonedPacket)
 	{
 		MS_TRACE();
 
@@ -291,7 +291,7 @@ namespace RTC
 		}
 
 		// Process the packet.
-		if (this->rtpStream->ReceivePacket(packet))
+		if (this->rtpStream->ReceivePacket(packet, clonedPacket))
 		{
 			// Send the packet.
 			this->listener->OnConsumerSendRtpPacket(this, packet);
@@ -316,20 +316,22 @@ namespace RTC
 		packet->SetSequenceNumber(origSeq);
 	}
 
-	void SimpleConsumer::GetRtcp(
-	  RTC::RTCP::CompoundPacket* packet, RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
+	RTC::RTCP::CompoundPacket::UniquePtr SimpleConsumer::GetRtcp(
+	  RTC::RtpStreamSend* rtpStream, uint64_t nowMs)
 	{
 		MS_TRACE();
 
 		MS_ASSERT(rtpStream == this->rtpStream, "RTP stream does not match");
 
 		if (static_cast<float>((nowMs - this->lastRtcpSentTime) * 1.15) < this->maxRtcpInterval)
-			return;
+			return nullptr;
 
 		auto* report = this->rtpStream->GetRtcpSenderReport(nowMs);
 
 		if (!report)
-			return;
+			return nullptr;
+
+		auto packet = RTC::RTCP::CompoundPacket::Create();
 
 		packet->AddSenderReport(report);
 
@@ -339,6 +341,8 @@ namespace RTC
 		packet->AddSdesChunk(sdesChunk);
 
 		this->lastRtcpSentTime = nowMs;
+
+		return packet;
 	}
 
 	void SimpleConsumer::NeedWorstRemoteFractionLost(
@@ -526,9 +530,7 @@ namespace RTC
 		}
 
 		// Create a RtpStreamSend for sending a single media stream.
-		size_t bufferSize = params.useNack ? 600u : 0u;
-
-		this->rtpStream = new RTC::RtpStreamSend(this, params, bufferSize);
+		this->rtpStream = new RTC::RtpStreamSend(this, params, this->rtpParameters.mid, params.useNack);
 		this->rtpStreams.push_back(this->rtpStream);
 
 		// If the Consumer is paused, tell the RtpStreamSend.

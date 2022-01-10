@@ -45,7 +45,8 @@ namespace RTC
 		void SendRtpPacket(
 		  RTC::Consumer* consumer,
 		  RTC::RtpPacket* packet,
-		  RTC::Transport::onSendCallback* cb = nullptr) override;
+		  RTC::Transport::onSendCallback* cb     = nullptr,
+		  RTC::Transport::OnSendCallbackCtx* ctx = nullptr) override;
 		void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
 		void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
 		void SendMessage(
@@ -110,8 +111,8 @@ namespace RTC
 		// Allocated by this.
 		RTC::IceServer* iceServer{ nullptr };
 		// Map of UdpSocket/TcpServer and local announced IP (if any).
-		std::unordered_map<RTC::UdpSocket*, std::string> udpSockets;
-		std::unordered_map<RTC::TcpServer*, std::string> tcpServers;
+		absl::flat_hash_map<RTC::UdpSocket*, std::string> udpSockets;
+		absl::flat_hash_map<RTC::TcpServer*, std::string> tcpServers;
 		RTC::DtlsTransport* dtlsTransport{ nullptr };
 		RTC::SrtpSession* srtpRecvSession{ nullptr };
 		RTC::SrtpSession* srtpSendSession{ nullptr };

@@ -6,7 +6,7 @@ use crate::data_consumer::{DataConsumer, DataConsumerId, DataConsumerOptions, Da
 use crate::data_producer::{DataProducer, DataProducerId, DataProducerOptions, DataProducerType};
 use crate::data_structures::{AppData, SctpState, TransportListenIp, TransportTuple};
 use crate::messages::{
-    PlainTransportData, TransportCloseRequest, TransportConnectPlainRequest,
+    PlainTransportData, TransportCloseRequest, TransportConnectRequestPlain,
     TransportConnectRequestPlainData, TransportInternal,
 };
 use crate::producer::{Producer, ProducerId, ProducerOptions};
@@ -24,9 +24,9 @@ use async_executor::Executor;
 use async_trait::async_trait;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use log::{debug, error};
-use nohash_hasher::IntMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -108,8 +108,8 @@ pub struct PlainTransportDump {
     pub direct: bool,
     pub producer_ids: Vec<ProducerId>,
     pub consumer_ids: Vec<ConsumerId>,
-    pub map_ssrc_consumer_id: IntMap<u32, ConsumerId>,
-    pub map_rtx_ssrc_consumer_id: IntMap<u32, ConsumerId>,
+    pub map_ssrc_consumer_id: HashMap<u32, ConsumerId>,
+    pub map_rtx_ssrc_consumer_id: HashMap<u32, ConsumerId>,
     pub data_producer_ids: Vec<DataProducerId>,
     pub data_consumer_ids: Vec<DataConsumerId>,
     pub recv_rtp_header_extensions: RecvRtpHeaderExtensions,
@@ -191,14 +191,14 @@ pub struct PlainTransportRemoteParameters {
 
 #[derive(Default)]
 struct Handlers {
-    new_producer: Bag<Arc<dyn Fn(&Producer) + Send + Sync>, Producer>,
-    new_consumer: Bag<Arc<dyn Fn(&Consumer) + Send + Sync>, Consumer>,
-    new_data_producer: Bag<Arc<dyn Fn(&DataProducer) + Send + Sync>, DataProducer>,
-    new_data_consumer: Bag<Arc<dyn Fn(&DataConsumer) + Send + Sync>, DataConsumer>,
-    tuple: Bag<Arc<dyn Fn(&TransportTuple) + Send + Sync>, TransportTuple>,
-    rtcp_tuple: Bag<Arc<dyn Fn(&TransportTuple) + Send + Sync>, TransportTuple>,
-    sctp_state_change: Bag<Arc<dyn Fn(SctpState) + Send + Sync>>,
-    trace: Bag<Arc<dyn Fn(&TransportTraceEventData) + Send + Sync>, TransportTraceEventData>,
+    new_producer: Bag<Box<dyn Fn(&Producer) + Send + Sync>>,
+    new_consumer: Bag<Box<dyn Fn(&Consumer) + Send + Sync>>,
+    new_data_producer: Bag<Box<dyn Fn(&DataProducer) + Send + Sync>>,
+    new_data_consumer: Bag<Box<dyn Fn(&DataConsumer) + Send + Sync>>,
+    tuple: Bag<Box<dyn Fn(&TransportTuple) + Send + Sync>>,
+    rtcp_tuple: Bag<Box<dyn Fn(&TransportTuple) + Send + Sync>>,
+    sctp_state_change: Bag<Box<dyn Fn(SctpState) + Send + Sync>>,
+    trace: Bag<Box<dyn Fn(&TransportTraceEventData) + Send + Sync>>,
     router_close: BagOnce<Box<dyn FnOnce() + Send>>,
     close: BagOnce<Box<dyn FnOnce() + Send>>,
 }
@@ -206,13 +206,8 @@ struct Handlers {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "event", rename_all = "lowercase", content = "data")]
 enum Notification {
-    Tuple {
-        tuple: TransportTuple,
-    },
-    #[serde(rename_all = "camelCase")]
-    RtcpTuple {
-        rtcp_tuple: TransportTuple,
-    },
+    Tuple(TransportTuple),
+    RtcpTuple(TransportTuple),
     #[serde(rename_all = "camelCase")]
     SctpStateChange {
         sctp_state: SctpState,
@@ -223,7 +218,7 @@ enum Notification {
 struct Inner {
     id: TransportId,
     next_mid_for_consumers: AtomicUsize,
-    used_sctp_stream_ids: Mutex<IntMap<u16, bool>>,
+    used_sctp_stream_ids: Mutex<HashMap<u16, bool>>,
     cname_for_producers: Mutex<Option<String>>,
     executor: Arc<Executor<'static>>,
     channel: Channel,
@@ -235,7 +230,7 @@ struct Inner {
     router: Router,
     closed: AtomicBool,
     // Drop subscription to transport-specific notifications when transport itself is dropped
-    subscription_handler: Mutex<Option<SubscriptionHandler>>,
+    _subscription_handler: Option<SubscriptionHandler>,
     _on_router_close_handler: Mutex<HandlerId>,
 }
 
@@ -264,16 +259,11 @@ impl Inner {
                         transport_id: self.id,
                     },
                 };
-
                 self.executor
                     .spawn(async move {
                         if let Err(error) = channel.request(request).await {
                             error!("transport closing failed on drop: {}", error);
                         }
-
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handler);
                     })
                     .detach();
             } else {
@@ -335,7 +325,9 @@ impl Transport for PlainTransport {
             .produce_impl(producer_options, TransportType::Plain)
             .await?;
 
-        self.inner.handlers.new_producer.call_simple(&producer);
+        self.inner.handlers.new_producer.call(|callback| {
+            callback(&producer);
+        });
 
         Ok(producer)
     }
@@ -347,7 +339,9 @@ impl Transport for PlainTransport {
             .consume_impl(consumer_options, TransportType::Plain, false)
             .await?;
 
-        self.inner.handlers.new_consumer.call_simple(&consumer);
+        self.inner.handlers.new_consumer.call(|callback| {
+            callback(&consumer);
+        });
 
         Ok(consumer)
     }
@@ -366,10 +360,9 @@ impl Transport for PlainTransport {
             )
             .await?;
 
-        self.inner
-            .handlers
-            .new_data_producer
-            .call_simple(&data_producer);
+        self.inner.handlers.new_data_producer.call(|callback| {
+            callback(&data_producer);
+        });
 
         Ok(data_producer)
     }
@@ -388,10 +381,9 @@ impl Transport for PlainTransport {
             )
             .await?;
 
-        self.inner
-            .handlers
-            .new_data_consumer
-            .call_simple(&data_consumer);
+        self.inner.handlers.new_data_consumer.call(|callback| {
+            callback(&data_consumer);
+        });
 
         Ok(data_consumer)
     }
@@ -407,35 +399,35 @@ impl Transport for PlainTransport {
 
     fn on_new_producer(
         &self,
-        callback: Arc<dyn Fn(&Producer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&Producer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_producer.add(callback)
     }
 
     fn on_new_consumer(
         &self,
-        callback: Arc<dyn Fn(&Consumer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&Consumer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_consumer.add(callback)
     }
 
     fn on_new_data_producer(
         &self,
-        callback: Arc<dyn Fn(&DataProducer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&DataProducer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_data_producer.add(callback)
     }
 
     fn on_new_data_consumer(
         &self,
-        callback: Arc<dyn Fn(&DataConsumer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&DataConsumer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_data_consumer.add(callback)
     }
 
     fn on_trace(
         &self,
-        callback: Arc<dyn Fn(&TransportTraceEventData) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&TransportTraceEventData) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.trace.add(callback)
     }
@@ -462,21 +454,13 @@ impl TransportGeneric for PlainTransport {
     async fn dump(&self) -> Result<Self::Dump, RequestError> {
         debug!("dump()");
 
-        serde_json::from_value(self.dump_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        self.dump_impl().await
     }
 
     async fn get_stats(&self) -> Result<Vec<Self::Stat>, RequestError> {
         debug!("get_stats()");
 
-        serde_json::from_value(self.get_stats_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        self.get_stats_impl().await
     }
 }
 
@@ -501,7 +485,7 @@ impl TransportImpl for PlainTransport {
         &self.inner.next_mid_for_consumers
     }
 
-    fn used_sctp_stream_ids(&self) -> &Mutex<IntMap<u16, bool>> {
+    fn used_sctp_stream_ids(&self) -> &Mutex<HashMap<u16, bool>> {
         &self.inner.used_sctp_stream_ids
     }
 
@@ -530,17 +514,21 @@ impl PlainTransport {
             let data = Arc::clone(&data);
 
             channel.subscribe_to_notifications(id.into(), move |notification| {
-                match serde_json::from_slice::<Notification>(notification) {
+                match serde_json::from_value::<Notification>(notification) {
                     Ok(notification) => match notification {
-                        Notification::Tuple { tuple } => {
+                        Notification::Tuple(tuple) => {
                             *data.tuple.lock() = tuple;
 
-                            handlers.tuple.call_simple(&tuple);
+                            handlers.tuple.call(|callback| {
+                                callback(&tuple);
+                            });
                         }
-                        Notification::RtcpTuple { rtcp_tuple } => {
+                        Notification::RtcpTuple(rtcp_tuple) => {
                             data.rtcp_tuple.lock().replace(rtcp_tuple);
 
-                            handlers.rtcp_tuple.call_simple(&rtcp_tuple);
+                            handlers.rtcp_tuple.call(|callback| {
+                                callback(&rtcp_tuple);
+                            });
                         }
                         Notification::SctpStateChange { sctp_state } => {
                             data.sctp_state.lock().replace(sctp_state);
@@ -550,7 +538,9 @@ impl PlainTransport {
                             });
                         }
                         Notification::Trace(trace_event_data) => {
-                            handlers.trace.call_simple(&trace_event_data);
+                            handlers.trace.call(|callback| {
+                                callback(&trace_event_data);
+                            });
                         }
                     },
                     Err(error) => {
@@ -562,7 +552,7 @@ impl PlainTransport {
 
         let next_mid_for_consumers = AtomicUsize::default();
         let used_sctp_stream_ids = Mutex::new({
-            let mut used_used_sctp_stream_ids = IntMap::default();
+            let mut used_used_sctp_stream_ids = HashMap::new();
             if let Some(sctp_parameters) = &data.sctp_parameters {
                 for i in 0..sctp_parameters.mis {
                     used_used_sctp_stream_ids.insert(i, false);
@@ -595,7 +585,7 @@ impl PlainTransport {
             app_data,
             router,
             closed: AtomicBool::new(false),
-            subscription_handler: Mutex::new(subscription_handler),
+            _subscription_handler: subscription_handler,
             _on_router_close_handler: Mutex::new(on_router_close_handler),
         });
 
@@ -709,7 +699,7 @@ impl PlainTransport {
         let response = self
             .inner
             .channel
-            .request(TransportConnectPlainRequest {
+            .request(TransportConnectRequestPlain {
                 internal: self.get_internal(),
                 data: TransportConnectRequestPlainData {
                     ip: remote_parameters.ip,
@@ -802,7 +792,7 @@ impl PlainTransport {
         &self,
         callback: F,
     ) -> HandlerId {
-        self.inner.handlers.tuple.add(Arc::new(callback))
+        self.inner.handlers.tuple.add(Box::new(callback))
     }
 
     /// Callback is called after the remote RTCP origin has been discovered. Only if `comedia` mode
@@ -811,7 +801,7 @@ impl PlainTransport {
         &self,
         callback: F,
     ) -> HandlerId {
-        self.inner.handlers.rtcp_tuple.add(Arc::new(callback))
+        self.inner.handlers.rtcp_tuple.add(Box::new(callback))
     }
 
     /// Callback is called when the transport SCTP state changes.
@@ -822,7 +812,7 @@ impl PlainTransport {
         self.inner
             .handlers
             .sctp_state_change
-            .add(Arc::new(callback))
+            .add(Box::new(callback))
     }
 
     /// Downgrade `PlainTransport` to [`WeakPlainTransport`] instance.

@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests;
 
+use bytes::Bytes;
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -769,18 +770,18 @@ pub enum TraceEventDirection {
 /// Container used for sending/receiving messages using `DirectTransport` data producers and data
 /// consumers.
 #[derive(Debug, Clone)]
-pub enum WebRtcMessage<'a> {
+pub enum WebRtcMessage {
     /// String
     String(String),
     /// Binary
-    Binary(Cow<'a, [u8]>),
+    Binary(Bytes),
     /// EmptyString
     EmptyString,
     /// EmptyBinary
     EmptyBinary,
 }
 
-impl<'a> WebRtcMessage<'a> {
+impl WebRtcMessage {
     // +------------------------------------+-----------+
     // | Value                              | SCTP PPID |
     // +------------------------------------+-----------+
@@ -792,7 +793,7 @@ impl<'a> WebRtcMessage<'a> {
     // | WebRTC Binary Empty                | 57        |
     // +------------------------------------+-----------+
 
-    pub(crate) fn new(ppid: u32, payload: Cow<'a, [u8]>) -> Result<Self, u32> {
+    pub(crate) fn new(ppid: u32, payload: Bytes) -> Result<Self, u32> {
         match ppid {
             51 => Ok(WebRtcMessage::String(
                 String::from_utf8(payload.to_vec()).unwrap(),
@@ -804,12 +805,12 @@ impl<'a> WebRtcMessage<'a> {
         }
     }
 
-    pub(crate) fn into_ppid_and_payload(self) -> (u32, Cow<'a, [u8]>) {
+    pub(crate) fn into_ppid_and_payload(self) -> (u32, Bytes) {
         match self {
-            WebRtcMessage::String(string) => (51_u32, Cow::from(string.into_bytes())),
+            WebRtcMessage::String(string) => (51_u32, Bytes::from(string)),
             WebRtcMessage::Binary(binary) => (53_u32, binary),
-            WebRtcMessage::EmptyString => (56_u32, Cow::from(b" ".as_ref())),
-            WebRtcMessage::EmptyBinary => (57_u32, Cow::from(vec![0_u8])),
+            WebRtcMessage::EmptyString => (56_u32, Bytes::from_static(b" ")),
+            WebRtcMessage::EmptyBinary => (57_u32, Bytes::from(vec![0_u8])),
         }
     }
 }

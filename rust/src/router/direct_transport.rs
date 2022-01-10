@@ -16,18 +16,20 @@ use crate::transport::{
     TransportTraceEventType,
 };
 use crate::worker::{
-    Channel, NotificationError, PayloadChannel, RequestError, SubscriptionHandler,
+    Channel, NotificationError, NotificationMessage, PayloadChannel, RequestError,
+    SubscriptionHandler,
 };
 use async_executor::Executor;
 use async_trait::async_trait;
+use bytes::Bytes;
 use event_listener_primitives::{Bag, BagOnce, HandlerId};
 use log::{debug, error};
-use nohash_hasher::IntMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
-use std::{fmt, mem};
 
 /// [`DirectTransport`] options.
 #[derive(Debug, Clone)]
@@ -59,8 +61,8 @@ pub struct DirectTransportDump {
     pub direct: bool,
     pub producer_ids: Vec<ProducerId>,
     pub consumer_ids: Vec<ConsumerId>,
-    pub map_ssrc_consumer_id: IntMap<u32, ConsumerId>,
-    pub map_rtx_ssrc_consumer_id: IntMap<u32, ConsumerId>,
+    pub map_ssrc_consumer_id: HashMap<u32, ConsumerId>,
+    pub map_rtx_ssrc_consumer_id: HashMap<u32, ConsumerId>,
     pub data_producer_ids: Vec<DataProducerId>,
     pub data_consumer_ids: Vec<DataConsumerId>,
     pub recv_rtp_header_extensions: RecvRtpHeaderExtensions,
@@ -111,12 +113,12 @@ pub struct DirectTransportStat {
 
 #[derive(Default)]
 struct Handlers {
-    rtcp: Bag<Arc<dyn Fn(&[u8]) + Send + Sync>>,
-    new_producer: Bag<Arc<dyn Fn(&Producer) + Send + Sync>, Producer>,
-    new_consumer: Bag<Arc<dyn Fn(&Consumer) + Send + Sync>, Consumer>,
-    new_data_producer: Bag<Arc<dyn Fn(&DataProducer) + Send + Sync>, DataProducer>,
-    new_data_consumer: Bag<Arc<dyn Fn(&DataConsumer) + Send + Sync>, DataConsumer>,
-    trace: Bag<Arc<dyn Fn(&TransportTraceEventData) + Send + Sync>, TransportTraceEventData>,
+    rtcp: Bag<Box<dyn Fn(&Bytes) + Send + Sync>>,
+    new_producer: Bag<Box<dyn Fn(&Producer) + Send + Sync>>,
+    new_consumer: Bag<Box<dyn Fn(&Consumer) + Send + Sync>>,
+    new_data_producer: Bag<Box<dyn Fn(&DataProducer) + Send + Sync>>,
+    new_data_consumer: Bag<Box<dyn Fn(&DataConsumer) + Send + Sync>>,
+    trace: Bag<Box<dyn Fn(&TransportTraceEventData) + Send + Sync>>,
     router_close: BagOnce<Box<dyn FnOnce() + Send>>,
     close: BagOnce<Box<dyn FnOnce() + Send>>,
 }
@@ -136,7 +138,7 @@ enum PayloadNotification {
 struct Inner {
     id: TransportId,
     next_mid_for_consumers: AtomicUsize,
-    used_sctp_stream_ids: Mutex<IntMap<u16, bool>>,
+    used_sctp_stream_ids: Mutex<HashMap<u16, bool>>,
     cname_for_producers: Mutex<Option<String>>,
     executor: Arc<Executor<'static>>,
     channel: Channel,
@@ -147,7 +149,7 @@ struct Inner {
     router: Router,
     closed: AtomicBool,
     // Drop subscription to transport-specific notifications when transport itself is dropped
-    subscription_handlers: Mutex<Vec<Option<SubscriptionHandler>>>,
+    _subscription_handlers: Vec<Option<SubscriptionHandler>>,
     _on_router_close_handler: Mutex<HandlerId>,
 }
 
@@ -176,16 +178,11 @@ impl Inner {
                         transport_id: self.id,
                     },
                 };
-
                 self.executor
                     .spawn(async move {
                         if let Err(error) = channel.request(request).await {
                             error!("transport closing failed on drop: {}", error);
                         }
-
-                        // Drop from a different thread to avoid deadlock with recursive dropping
-                        // from within another subscription drop.
-                        drop(subscription_handlers);
                     })
                     .detach();
             } else {
@@ -266,7 +263,9 @@ impl Transport for DirectTransport {
             .produce_impl(producer_options, TransportType::Direct)
             .await?;
 
-        self.inner.handlers.new_producer.call_simple(&producer);
+        self.inner.handlers.new_producer.call(|callback| {
+            callback(&producer);
+        });
 
         Ok(producer)
     }
@@ -281,7 +280,9 @@ impl Transport for DirectTransport {
             .consume_impl(consumer_options, TransportType::Direct, false)
             .await?;
 
-        self.inner.handlers.new_consumer.call_simple(&consumer);
+        self.inner.handlers.new_consumer.call(|callback| {
+            callback(&consumer);
+        });
 
         Ok(consumer)
     }
@@ -303,10 +304,9 @@ impl Transport for DirectTransport {
             )
             .await?;
 
-        self.inner
-            .handlers
-            .new_data_producer
-            .call_simple(&data_producer);
+        self.inner.handlers.new_data_producer.call(|callback| {
+            callback(&data_producer);
+        });
 
         Ok(data_producer)
     }
@@ -328,10 +328,9 @@ impl Transport for DirectTransport {
             )
             .await?;
 
-        self.inner
-            .handlers
-            .new_data_consumer
-            .call_simple(&data_consumer);
+        self.inner.handlers.new_data_consumer.call(|callback| {
+            callback(&data_consumer);
+        });
 
         Ok(data_consumer)
     }
@@ -347,35 +346,35 @@ impl Transport for DirectTransport {
 
     fn on_new_producer(
         &self,
-        callback: Arc<dyn Fn(&Producer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&Producer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_producer.add(callback)
     }
 
     fn on_new_consumer(
         &self,
-        callback: Arc<dyn Fn(&Consumer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&Consumer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_consumer.add(callback)
     }
 
     fn on_new_data_producer(
         &self,
-        callback: Arc<dyn Fn(&DataProducer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&DataProducer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_data_producer.add(callback)
     }
 
     fn on_new_data_consumer(
         &self,
-        callback: Arc<dyn Fn(&DataConsumer) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&DataConsumer) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.new_data_consumer.add(callback)
     }
 
     fn on_trace(
         &self,
-        callback: Arc<dyn Fn(&TransportTraceEventData) + Send + Sync + 'static>,
+        callback: Box<dyn Fn(&TransportTraceEventData) + Send + Sync + 'static>,
     ) -> HandlerId {
         self.inner.handlers.trace.add(callback)
     }
@@ -403,11 +402,7 @@ impl TransportGeneric for DirectTransport {
     async fn dump(&self) -> Result<Self::Dump, RequestError> {
         debug!("dump()");
 
-        serde_json::from_value(self.dump_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        self.dump_impl().await
     }
 
     /// Returns current RTC statistics of the transport.
@@ -417,11 +412,7 @@ impl TransportGeneric for DirectTransport {
     async fn get_stats(&self) -> Result<Vec<Self::Stat>, RequestError> {
         debug!("get_stats()");
 
-        serde_json::from_value(self.get_stats_impl().await?).map_err(|error| {
-            RequestError::FailedToParse {
-                error: error.to_string(),
-            }
-        })
+        self.get_stats_impl().await
     }
 }
 
@@ -446,7 +437,7 @@ impl TransportImpl for DirectTransport {
         &self.inner.next_mid_for_consumers
     }
 
-    fn used_sctp_stream_ids(&self) -> &Mutex<IntMap<u16, bool>> {
+    fn used_sctp_stream_ids(&self) -> &Mutex<HashMap<u16, bool>> {
         &self.inner.used_sctp_stream_ids
     }
 
@@ -472,10 +463,12 @@ impl DirectTransport {
             let handlers = Arc::clone(&handlers);
 
             channel.subscribe_to_notifications(id.into(), move |notification| {
-                match serde_json::from_slice::<Notification>(notification) {
+                match serde_json::from_value::<Notification>(notification) {
                     Ok(notification) => match notification {
                         Notification::Trace(trace_event_data) => {
-                            handlers.trace.call_simple(&trace_event_data);
+                            handlers.trace.call(|callback| {
+                                callback(&trace_event_data);
+                            });
                         }
                     },
                     Err(error) => {
@@ -488,12 +481,13 @@ impl DirectTransport {
         let payload_subscription_handler = {
             let handlers = Arc::clone(&handlers);
 
-            payload_channel.subscribe_to_notifications(id.into(), move |message, payload| {
-                match serde_json::from_slice::<PayloadNotification>(message) {
+            payload_channel.subscribe_to_notifications(id.into(), move |notification| {
+                let NotificationMessage { message, payload } = notification;
+                match serde_json::from_value::<PayloadNotification>(message) {
                     Ok(notification) => match notification {
                         PayloadNotification::Rtcp => {
                             handlers.rtcp.call(|callback| {
-                                callback(payload);
+                                callback(&payload);
                             });
                         }
                     },
@@ -505,7 +499,7 @@ impl DirectTransport {
         };
 
         let next_mid_for_consumers = AtomicUsize::default();
-        let used_sctp_stream_ids = Mutex::new(IntMap::default());
+        let used_sctp_stream_ids = Mutex::new(HashMap::new());
         let cname_for_producers = Mutex::new(None);
         let inner_weak = Arc::<Mutex<Option<Weak<Inner>>>>::default();
         let on_router_close_handler = router.on_close({
@@ -530,10 +524,7 @@ impl DirectTransport {
             app_data,
             router,
             closed: AtomicBool::new(false),
-            subscription_handlers: Mutex::new(vec![
-                subscription_handler,
-                payload_subscription_handler,
-            ]),
+            _subscription_handlers: vec![subscription_handler, payload_subscription_handler],
             _on_router_close_handler: Mutex::new(on_router_close_handler),
         });
 
@@ -545,18 +536,21 @@ impl DirectTransport {
     /// Send a RTCP packet from the Rust process.
     ///
     /// * `rtcp_packet` - Bytes containing a valid RTCP packet (can be a compound packet).
-    pub fn send_rtcp(&self, rtcp_packet: Vec<u8>) -> Result<(), NotificationError> {
-        self.inner.payload_channel.notify(
-            TransportSendRtcpNotification {
-                internal: self.get_internal(),
-            },
-            rtcp_packet,
-        )
+    pub async fn send_rtcp(&self, rtcp_packet: Bytes) -> Result<(), NotificationError> {
+        self.inner
+            .payload_channel
+            .notify(
+                TransportSendRtcpNotification {
+                    internal: self.get_internal(),
+                },
+                rtcp_packet,
+            )
+            .await
     }
 
     /// Callback is called when the direct transport receives a RTCP packet from its router.
-    pub fn on_rtcp<F: Fn(&[u8]) + Send + Sync + 'static>(&self, callback: F) -> HandlerId {
-        self.inner.handlers.rtcp.add(Arc::new(callback))
+    pub fn on_rtcp<F: Fn(&Bytes) + Send + Sync + 'static>(&self, callback: F) -> HandlerId {
+        self.inner.handlers.rtcp.add(Box::new(callback))
     }
 
     /// Downgrade `DirectTransport` to [`WeakDirectTransport`] instance.
