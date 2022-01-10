@@ -37,7 +37,10 @@ inline static void onWrite(uv_write_t* req, int status)
 	if (connection)
 		connection->OnUvWrite(status, cb, ctx);
 	else if (cb)
+	{
 		(*cb)(false, ctx);
+		delete cb;
+	}
 
 	// Delete the UvWriteData struct.
 	delete writeData;
@@ -192,6 +195,7 @@ void TcpConnectionHandler::Write(
 		if (cb)
 		{
 			(*cb)(false, ctx);
+			delete cb;
 		}
 
 		return;
@@ -202,6 +206,7 @@ void TcpConnectionHandler::Write(
 		if (cb)
 		{
 			(*cb)(false, ctx);
+			delete cb;
 		}
 
 		return;
@@ -228,6 +233,7 @@ void TcpConnectionHandler::Write(
 		if (cb)
 		{
 			(*cb)(true, ctx);
+			delete cb;
 		}
 
 		return;
