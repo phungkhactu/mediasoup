@@ -1,5 +1,11 @@
 # Changelog
 
+### 3.9.4
+
+* `Worker`: Fix bad printing of error messages from Worker (PR #750 by @j1elo).
+* Update NPM deps.
+
+
 
 ### 3.9.3
 
